@@ -1,0 +1,30 @@
+flowchart LR
+	subgraph Input[輸入層]
+		S1[CIP紀錄輸入<br>表單/人工/匯入]
+		S2[感測/自動資料<br>流量/導電度/pH/溫度]
+	end
+
+	subgraph Data[資料層]
+		T1[(CIP紀錄表<br>Fact)]
+		T2[(基準/目標表<br>Baseline)]
+		T3[(異常&改善表<br>CAPA 可選)]
+	end
+
+	subgraph Logic[邏輯層]
+		L1[規則/計算<br>節水率、節時率、FPY、成本]
+		L2[達標判定<br>閾值/權重/紅黃綠]
+	end
+
+	subgraph Output[輸出層]
+		O1[達標率看板<br>Overall / 設備別 / 配方別]
+		O2[趨勢圖<br>時間序列、移動平均]
+		O3[異常清單<br>超標批次、原因排行]
+	end
+
+	S1 --> T1
+	S2 --> T1
+	T2 --> L1
+	T1 --> L1 --> L2
+	L2 --> O1
+	L1 --> O2
+	L2 --> T3 --> O3
