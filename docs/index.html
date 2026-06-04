@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>CIP 清洗效益 QC 資料治理 POC</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.2/papaparse.min.js"></script>
+<style>
+  :root { --primary:#1e293b; --bg:#f8fafc; --card:#fff; --text:#334155; --blue:#3b82f6; }
+  * { box-sizing:border-box; }
+  body { font-family:-apple-system,"PingFang TC","Segoe UI",Roboto,sans-serif; background:var(--bg); color:var(--text); margin:0; }
+  nav { background:var(--primary); color:#fff; padding:18px 24px; font-size:1.35rem; font-weight:bold; box-shadow:0 2px 4px rgba(0,0,0,.1); }
+  .container { max-width:1200px; margin:28px auto; padding:0 20px; }
+  .intro { color:#475569; font-size:.97rem; line-height:1.7; margin-bottom:24px; }
+  .stat-row { display:grid; grid-template-columns:repeat(4,1fr); gap:16px; margin-bottom:28px; }
+  @media (max-width:768px){ .stat-row{ grid-template-columns:repeat(2,1fr);} }
+  .stat { background:var(--card); border-radius:12px; padding:18px; box-shadow:0 4px 6px -1px rgba(0,0,0,.05); }
+  .stat .n { font-size:1.7rem; font-weight:800; color:#0f172a; }
+  .stat .l { font-size:.8rem; color:#64748b; margin-top:4px; }
+  .dashboard-grid { display:grid; grid-template-columns:1fr 1fr; gap:24px; margin-bottom:28px; }
+  @media (max-width:768px){ .dashboard-grid{ grid-template-columns:1fr;} }
+  .card { background:var(--card); border-radius:12px; padding:24px; box-shadow:0 4px 6px -1px rgba(0,0,0,.05),0 2px 4px -1px rgba(0,0,0,.06); margin-bottom:24px; }
+  .card h3 { margin:0 0 18px; color:#0f172a; font-size:1.1rem; border-left:4px solid var(--blue); padding-left:10px; }
+  .mermaid { background:#0f172a; border-radius:10px; padding:20px; text-align:center; }
+  .note { background:#fffbeb; border:1px solid #fde68a; border-radius:10px; padding:14px 16px; font-size:.9rem; color:#854d0e; margin-bottom:24px; }
+  .note b { color:#92400e; }
+  .table-responsive { overflow-x:auto; max-height:480px; overflow-y:auto; }
+  table { width:100%; border-collapse:collapse; text-align:left; font-size:.92rem; }
+  th,td { padding:11px 15px; border-bottom:1px solid #e2e8f0; }
+  th { background:#f1f5f9; color:#475569; font-weight:600; position:sticky; top:0; }
+  tr:hover { background:#f8fafc; }
+  .badge { padding:3px 9px; border-radius:6px; font-size:.82rem; font-weight:500; }
+  .badge-success { background:#dcfce7; color:#166534; }
+  .badge-warning { background:#fef9c3; color:#854d0e; }
+  .badge-muted { background:#f1f5f9; color:#64748b; }
+  footer { text-align:center; color:#94a3b8; font-size:.8rem; padding:30px; }
+  a.dl { color:var(--blue); font-size:.85rem; text-decoration:none; }
+</style>
+</head>
+<body>
+<nav>🧼 CIP 清洗效益 QC 資料治理 POC</nav>
+<div class="container">
+
+  <p class="intro">
+    本 POC 展示工廠 <b>CIP（原地清洗）</b>作業的 QC 紀錄如何從<b>髒亂的原始資料</b>（多種日期格式、欄位錯置、空值）
+    匯入、治理，並轉成可監控的<b>達標率看板</b>。下方依序為系統架構、資料品質提醒，以及即時統計儀表板。
+  </p>
+
+  <div class="stat-row" id="statRow"></div>
+
+  <div class="card">
+    <h3>系統架構（輸入 → 資料 → 邏輯 → 輸出）</h3>
+    <pre class="mermaid">
+flowchart LR
+  subgraph Input[輸入層]
+    S1[CIP紀錄輸入<br>表單/人工/匯入]
+    S2[感測/自動資料<br>流量/導電度/pH/溫度]
+  end
+  subgraph Data[資料層]
+    T1[(CIP紀錄表 Fact)]
+    T2[(基準/目標表 Baseline)]
+    T3[(異常與改善表 CAPA)]
+  end
+  subgraph Logic[邏輯層]
+    L1[規則計算<br>節水率/節時率/FPY/成本]
+    L2[達標判定<br>閾值/權重/紅黃綠]
+  end
+  subgraph Output[輸出層]
+    O1[達標率看板]
+    O2[趨勢圖]
+    O3[異常清單]
+  end
+  S1 --> T1
+  S2 --> T1
+  T2 --> L1
+  T1 --> L1 --> L2
+  L2 --> O1
+  L1 --> O2
+  L2 --> T3 --> O3
+    </pre>
+  </div>
+
+  <div class="note">
+    ⚠️ <b>資料品質提醒：</b>原始 QC-008 資料存在 <b>多種日期格式</b>（20260101、2 Mar 2026、2026/1/1、2026-05-05）、
+    <b>欄位錯置</b>與<b>空值</b>。實務上需先經資料清理與欄位標準化，下方儀表板直接呈現原始資料的分佈，凸顯治理需求。
+  </div>
+
+  <div class="dashboard-grid">
+    <div class="card"><h3>各設備 CIP 執行次數</h3><canvas id="deviceChart"></canvas></div>
+    <div class="card"><h3>清洗結果分佈</h3><canvas id="resultChart"></canvas></div>
+  </div>
+
+  <div class="card">
+    <h3>QC-008 歷史清洗紀錄明細
+      <a class="dl" href="QC-008.csv" download>　↓ 下載原始 CSV</a>
+    </h3>
+    <div class="table-responsive">
+      <table>
+        <thead><tr><th>日期</th><th>設備</th><th>清洗時間/參數</th><th>殘留檢測</th><th>判定結果</th></tr></thead>
+        <tbody id="csvDataBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <footer>FIRDI-G · CIP 清洗效益 QC 資料治理 POC · 資料筆數 120</footer>
+</div>
+
+<!-- 原始資料直接內嵌，免讀檔、最穩定 -->
+<script id="csv-data" type="text/plain">日期,設備,清洗時間,殘留檢測,結果
+20260101,項目2,2026/1/1,C,項目2
+2 Mar 2026,項目3,2026/2/2,項目3,B
+20260303,項目1,20260303,項目2,項目3
+4 May 2026,項目2,4 May 2026,B,項目1
+20260505,項目3,2026-05-05,項目1,C
+2026-06-06,C,6 Jan 2026,項目3,A
+20260707,項目3,2026/7/7,項目3,C
+20260808,C,2026/8/8,項目3,B
+2026/9/9,項目2,2026/9/9,C,B
+2026/10/10,,20261010,項目2,A
+20261111,A,2026/11/11,C,C
+12 Jan 2026,C,20261212,項目3,項目3
+20260113,A,13 Feb 2026,項目2,項目3
+14 Mar 2026,B,2026-02-14,A,項目3
+15 Apr 2026,項目1,20260315,C,項目1
+16 May 2026,B,2026/4/16,項目1,項目2
+2026/5/17,項目2,2026/5/17,項目2,項目3
+2026/6/18,項目2,2026-06-18,項目1,項目1
+2026/7/19,C,2026/7/19,C,項目3
+2026/8/20,項目2,20260820,C,項目3
+2026/9/21,B,2026/9/21,項目1,C
+2026-10-22,項目2,2026/10/22,項目2,項目1
+2026/11/23,項目1,20261123,C,項目2
+2026-12-24,項目1,2026/12/24,A,項目3
+2026-01-25,A,2026-01-25,C,A
+2026-02-26,A,26 Mar 2026,C,C
+2026/3/27,A,2026-03-27,B,項目1
+2026/4/28,項目2,2026-04-28,項目3,項目2
+2026-05-01,C,2026/5/1,C,項目1
+2026-06-02,項目2,2 Jan 2026,項目2,項目2
+20260703,C,3 Feb 2026,B,A
+4 Mar 2026,項目2,20260804,項目3,項目3
+2026-09-05,B,2026/9/5,C,C
+6 May 2026,項目3,2026-10-06,項目1,項目1
+2026/11/7,A,7 Jun 2026,C,項目1
+20261208,項目1,20261208,項目1,C
+2026/1/9,項目3,9 Feb 2026,C,C
+2026/2/10,B,10 Mar 2026,C,項目3
+20260311,項目3,20260311,項目3,A
+12 May 2026,A,12 May 2026,B,C
+2026-05-13,項目2,2026-05-13,項目1,C
+14 Jan 2026,A,20260614,A,項目3
+20260715,A,20260715,A,項目2
+2026-08-16,C,20260816,A,項目1
+2026-09-17,項目3,20260917,C,項目2
+20261018,項目3,2026/10/18,A,C
+2026-11-19,項目2,2026-11-19,項目2,項目1
+2026/12/20,A,20261220,項目2,項目3
+21 Feb 2026,項目2,2026/1/21,A,A
+2026-02-22,項目3,22 Mar 2026,項目2,項目2
+20260323,B,20260323,A,A
+2026-04-24,A,2026/4/24,項目3,項目1
+2026/5/25,項目3,20260525,B,項目3
+2026-06-26,項目2,20260626,項目2,A
+20260727,項目1,27 Feb 2026,C,項目2
+28 Mar 2026,C,28 Mar 2026,C,B
+20260901,B,2026/9/1,B,項目2
+2 May 2026,項目3,2 May 2026,C,項目2
+3 Jun 2026,B,20261103,項目1,項目1
+20261204,項目3,20261204,項目2,項目2
+5 Feb 2026,C,2026-01-05,項目3,C
+20260206,項目3,6 Mar 2026,B,項目3
+2026-03-07,項目2,7 Apr 2026,C,B
+2026-04-08,C,2026-04-08,項目2,A
+20260509,項目1,9 Jun 2026,B,項目1
+20260610,項目2,10 Jan 2026,項目1,B
+20260711,A,11 Feb 2026,項目1,A
+20260812,項目2,12 Mar 2026,C,項目2
+13 Apr 2026,項目1,20260913,項目2,項目2
+2026/10/14,項目3,14 May 2026,B,A
+2026-11-15,項目3,15 Jun 2026,A,項目3
+2026-12-16,C,2026-12-16,B,B
+2026/1/17,項目3,2026/1/17,C,項目2
+18 Mar 2026,項目2,20260218,A,C
+2026/3/19,項目3,19 Apr 2026,項目2,項目2
+20 May 2026,項目1,2026/4/20,C,C
+20260521,項目1,21 Jun 2026,,項目2
+20260622,C,20260622,B,項目2
+20260723,項目3,2026/7/23,,A
+24 Mar 2026,項目2,20260824,項目3,項目2
+2026-09-25,項目3,2026/9/25,項目1,項目1
+26 May 2026,B,20261026,項目3,項目2
+27 Jun 2026,C,20261127,B,項目1
+20261228,C,28 Jan 2026,A,項目2
+1 Feb 2026,B,2026/1/1,C,項目3
+2 Mar 2026,B,2026/2/2,B,項目1
+2026-03-03,A,,項目1,項目2
+2026-04-04,項目1,2026-04-04,C,項目2
+2026/5/5,項目3,5 Jun 2026,項目3,項目1
+20260606,項目3,2026/6/6,A,A
+2026/7/7,B,20260707,C,A
+2026-08-08,B,2026/8/8,項目2,A
+2026-09-09,項目1,9 Apr 2026,項目2,項目2
+2026/10/10,C,2026/10/10,項目1,C
+2026-11-11,A,2026/11/11,項目1,項目2
+2026-12-12,項目2,2026-12-12,B,項目3
+13 Feb 2026,A,20260113,項目1,B
+14 Mar 2026,A,2026/2/14,C,C
+20260315,B,2026/3/15,項目1,項目2
+2026/4/16,項目2,2026-04-16,B,A
+2026/5/17,項目3,2026/5/17,B,項目3
+2026-06-18,A,2026-06-18,項目2,B
+2026/7/19,C,19 Feb 2026,項目3,B
+20 Mar 2026,B,20260820,項目2,項目2
+21 Apr 2026,項目3,2026-09-21,項目3,項目3
+20261022,項目1,22 May 2026,A,項目1
+20261123,B,20261123,項目2,項目2
+2026/12/24,項目1,20261224,項目1,C
+2026-01-25,項目2,25 Feb 2026,C,C
+2026-02-26,B,26 Mar 2026,項目3,A
+2026/3/27,C,2026-03-27,B,項目3
+,B,2026/4/28,項目3,項目1
+2026-05-01,,1 Jun 2026,項目2,A
+20260602,C,2 Jan 2026,A,A
+2026-07-03,A,20260703,B,B
+4 Mar 2026,C,2026-08-04,項目1,B
+2026/9/5,項目1,2026/9/5,B,項目1
+2026/10/6,項目3,2026/10/6,項目3,A
+20261107,C,2026-11-07,項目1,項目1
+8 Jan 2026,項目2,2026-12-08,A,C
+20260711,A,11 Feb 2026,項目1,A</script>
+
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({ startOnLoad: true, theme: 'dark' });
+</script>
+
+<script>
+  const csvText = document.getElementById('csv-data').textContent.trim();
+  const parsed = Papa.parse(csvText, { header: true, skipEmptyLines: true });
+  const data = parsed.data;
+
+  // 統計卡
+  const devices = new Set(data.map(r => r['設備']).filter(Boolean));
+  const results = new Set(data.map(r => r['結果']).filter(Boolean));
+  const blanks = data.filter(r => !r['設備'] || !r['結果'] || !r['日期']).length;
+  document.getElementById('statRow').innerHTML = [
+    ['120','總紀錄筆數'], [devices.size,'設備種類'], [results.size,'判定結果種類'], [blanks,'含空值筆數(待清理)']
+  ].map(([n,l]) => `<div class="stat"><div class="n">${n}</div><div class="l">${l}</div></div>`).join('');
+
+  // 明細表
+  const tbody = document.getElementById('csvDataBody');
+  tbody.innerHTML = data.map(row => {
+    const result = row['結果'] || '未判定';
+    let cls = 'badge-warning';
+    if (result === 'A' || result === '項目1') cls = 'badge-success';
+    else if (result === '未判定') cls = 'badge-muted';
+    return `<tr>
+      <td>${row['日期']||'<span style=color:#cbd5e1>—</span>'}</td>
+      <td><strong>${row['設備']||'<span style=color:#cbd5e1>—</span>'}</strong></td>
+      <td>${row['清洗時間']||'—'}</td>
+      <td>${row['殘留檢測']||'—'}</td>
+      <td><span class="badge ${cls}">${result}</span></td>
+    </tr>`;
+  }).join('');
+
+  // 圖表
+  const count = key => { const m={}; data.forEach(r=>{const k=r[key]||'(空值)'; m[k]=(m[k]||0)+1;}); return m; };
+  const dc = count('設備'), rc = count('結果');
+  new Chart(document.getElementById('deviceChart'), {
+    type:'bar',
+    data:{ labels:Object.keys(dc), datasets:[{ label:'清洗次數', data:Object.values(dc), backgroundColor:'#3b82f6', borderRadius:6 }] },
+    options:{ responsive:true, plugins:{legend:{display:false}}, scales:{ y:{ beginAtZero:true } } }
+  });
+  new Chart(document.getElementById('resultChart'), {
+    type:'doughnut',
+    data:{ labels:Object.keys(rc), datasets:[{ data:Object.values(rc), backgroundColor:['#10b981','#f59e0b','#3b82f6','#ef4444','#8b5cf6','#94a3b8'] }] },
+    options:{ responsive:true }
+  });
+</script>
+</body>
+</html>
